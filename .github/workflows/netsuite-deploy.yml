@@ -1,0 +1,52 @@
+name: NetSuite CI Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  netsuite-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install SuiteCloud CLI
+        run: npm install -g @oracle/suitecloud-cli --acceptsuitecloudsdklicense
+
+      - name: Restore private key file
+        run: |
+          echo "${{ secrets.SDF_PRIVATE_KEY }}" > private-key.pem
+          chmod 600 private-key.pem
+          npm install
+
+     
+      - name: Code Linting 
+        run: npm run lint
+
+      - name: Deploy to NetSuite
+        env:
+          SUITECLOUD_CI: 1
+          SUITECLOUD_CI_PASSKEY: ${{ secrets.SDF_CI_PASSKEY }}
+        run: |
+          suitecloud account:setup:ci \
+            --authid ${{ secrets.SDF_AUTH_ID }} \
+            --certificateid ${{ secrets.SDF_CERTIFICATE_ID }} \
+            --privatekeypath private-key.pem \
+            --account ${{ secrets.SDF_ACCOUNT }}
+
+            
+          suitecloud project:deploy
+
+      # - name: Deploy to NetSuite
+      #   env:
+      #     SUITECLOUD_CI: 1
+      #     SUITECLOUD_CI_PASSKEY: ${{ secrets.SDF_CI_PASSKEY }}
+      #   run: suitecloud project:deploy --authid ${{ secrets.SDF_AUTH_ID }}

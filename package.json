@@ -1,0 +1,25 @@
+{
+  "name": "suitecloud-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "jest",
+    "lint": "npx eslint src/**/*.js",
+    "all": "npx eslint src/**/*.js && npx jest"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@oracle/suitecloud-unit-testing": "^1.7.0",
+    "@types/jest": "29.5.14",
+    "eslint": "^8.57.1",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^50.6.17",
+    "eslint-plugin-n": "^16.6.2",
+    "eslint-plugin-promise": "^6.6.0",
+    "jest": "29.7.0"
+  },
+  "dependencies": {
+    "directory-tree": "^3.5.2",
+    "lint": "^0.8.19"
+  }
+}
