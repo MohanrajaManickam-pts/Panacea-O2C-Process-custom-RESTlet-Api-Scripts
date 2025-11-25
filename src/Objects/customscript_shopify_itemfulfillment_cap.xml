@@ -1,0 +1,22 @@
+<restlet scriptid="customscript_shopify_itemfulfillment_cap">
+  <description>shopify itemfulfillment capture</description>
+  <isinactive>F</isinactive>
+  <name>shopify itemfulfillment capture</name>
+  <notifyadmins>F</notifyadmins>
+  <notifyemails></notifyemails>
+  <notifyowner>T</notifyowner>
+  <notifyuser>F</notifyuser>
+  <scriptfile>[/SuiteScripts/PTS/Scripts/Restlets/item_fulfillment_shopify_capture_rst.js]</scriptfile>
+  <scriptdeployments>
+    <scriptdeployment scriptid="customdeploy_shopify_fulfill_request">
+      <allemployees>T</allemployees>
+      <allpartners>F</allpartners>
+      <allroles>T</allroles>
+      <audslctrole></audslctrole>
+      <isdeployed>T</isdeployed>
+      <loglevel>DEBUG</loglevel>
+      <status>RELEASED</status>
+      <title>shopify itemfulfillment capture</title>
+    </scriptdeployment>
+  </scriptdeployments>
+</restlet>
