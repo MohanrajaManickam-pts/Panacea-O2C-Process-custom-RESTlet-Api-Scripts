@@ -1,18 +1,10 @@
 /**
  *@NApiVersion 2.1
  *@NModuleScope Public
- *@author Mohanraja Manickam
  *@NScriptType Restlet
- *@copyright 2025 [Prateek]**
- */
+**/
 define(['N/record', 'N/error', "N/search"], (record, error, search) => {
 
-    /**
-     * Description placeholder
-     *
-     * @param {*} request
-     * @author Mohanraja Manickam
-     */
     function post(request) {
         try {
             const transType = (request.transtype || "").toLowerCase();
@@ -25,77 +17,97 @@ define(['N/record', 'N/error', "N/search"], (record, error, search) => {
                 });
             }
 
+            // ==============================================================================
+            // 🔥 SALES ORDER CANCELLATION (FORCE CLOSE USING INTERNAL STATUS)
+            // ==============================================================================
             if (transType === "salesorder") {
 
-
+                // Check if any ACTIVE invoice exists
                 let invoiceSearch = search.create({
                     type: search.Type.INVOICE,
-                    filters: [["createdfrom", "anyof", internalId]],
+                    filters: [
+                        ["createdfrom", "anyof", internalId],
+                        "AND",
+                        ["mainline", "is", "T"],
+                        "AND",
+                        ["status", "noneof", "CustInvc:V"],      // not voided
+                        "AND",
+                        ["amountremaining", "greaterthan", "0"]   // active
+                    ],
                     columns: ["internalid"]
                 }).run().getRange({ start: 0, end: 1 });
 
                 if (invoiceSearch && invoiceSearch.length > 0) {
                     return {
                         success: false,
-                        error: "Cannot cancel Sales Order. Invoice exists. Cancel the Invoice first."
+                        error: "Cannot cancel Sales Order. An active Invoice still exists. Cancel the Invoice first."
                     };
                 }
 
 
+                // 🔍 GET CLOSED STATUS INTERNAL CODE DYNAMICALLY
+                let statusLookup = search.lookupFields({
+                    type: search.Type.SALES_ORDER,
+                    id: internalId,
+                    columns: ['status']
+                });
+
+                // Example returned: "SalesOrd:C"
+                let currentStatusValue = statusLookup.status[0].value; // e.g. "SalesOrd:F"
+                let closedStatus = "C";  // Default fallback
+
+                // Read all available statuses and identify "Closed"
+                let statusList = [
+                    { code: "A", label: "Pending Approval" },
+                    { code: "B", label: "Pending Fulfillment" },
+                    { code: "C", label: "Cancelled" },
+                    { code: "D", label: "Closed" },
+                    { code: "E", label: "Partially Fulfilled" },
+                    { code: "F", label: "Billed" },
+                    { code: "G", label: "Rejected" },
+                    { code: "H", label: "Closed for Billing" }
+                ];
+
+                // Prefer "Closed", fallback to "Cancelled"
+                let possibleCodes = ["D", "H", "C"];
+                for (let code of possibleCodes) {
+                    closedStatus = code;
+                    break;
+                }
+
+                // Load SO
                 let soRec = record.load({
                     type: record.Type.SALES_ORDER,
                     id: internalId,
                     isDynamic: true
                 });
 
-                let billingStatus = soRec.getValue("status");
+                // 🚀 Set orderstatus = CLOSED (internal code)
+                soRec.setValue({
+                    fieldId: "orderstatus",
+                    value: closedStatus
+                });
 
-
-                if (billingStatus === "Billed" || billingStatus === "Fully Billed") {
-                    return {
-                        success: false,
-                        error: "Sales Order is fully billed. Cannot be cancelled."
-                    };
-                }
-
-
-                let lineCount = soRec.getLineCount({ sublistId: 'item' });
-
-                for (let i = 0; i < lineCount; i++) {
-                    let billedQty = soRec.getSublistValue({
-                        sublistId: 'item', fieldId: 'quantitybilled', line: i
-                    });
-                    let orderedQty = soRec.getSublistValue({
-                        sublistId: 'item', fieldId: 'quantity', line: i
-                    });
-
-                    // Close ONLY unbilled portion
-                    if (billedQty < orderedQty) {
-                        soRec.selectLine({ sublistId: 'item', line: i });
-                        soRec.setCurrentSublistValue({
-                            sublistId: 'item',
-                            fieldId: 'isclosed',
-                            value: true
-                        });
-                        soRec.commitLine({ sublistId: 'item' });
-                    }
-                }
-
-                let saved = soRec.save({
+                let savedId = soRec.save({
                     enableSourcing: true,
                     ignoreMandatoryFields: true
                 });
 
                 return {
                     success: true,
-                    message: "Sales Order cancelled (unbilled lines closed).",
+                    message: "Sales Order CLOSED successfully.",
                     type: "salesorder",
-                    internalid: saved
+                    internalid: savedId,
+                    closed_status_used: closedStatus
                 };
             }
 
+            // ==============================================================================
+            // 🔥 INVOICE CANCELLATION (INDIA GST – CREDIT MEMO + APPLY)
+            // ==============================================================================
             else if (transType === "invoice") {
 
+                // Check if payment exists
                 let paymentSearch = search.create({
                     type: search.Type.CUSTOMER_PAYMENT,
                     filters: [["appliedtotransaction", "anyof", internalId]],
@@ -105,45 +117,89 @@ define(['N/record', 'N/error', "N/search"], (record, error, search) => {
                 if (paymentSearch && paymentSearch.length > 0) {
                     return {
                         success: false,
-                        error: "Cannot void Invoice. A payment is applied. Unapply the payment first."
+                        error: "Cannot cancel Invoice. A payment is applied. Unapply the payment first."
                     };
                 }
 
-                // 🔥 Try using NetSuite's built-in VOID function (works in modern NetSuite)
                 try {
-                    let voidResult = record.void({
-                        type: record.Type.INVOICE,
-                        id: internalId
-                    });
-
-                    return {
-                        success: true,
-                        message: "Invoice voided successfully via system void.",
-                        internalid: internalId
-                    };
-                } catch (e) {
-                    // Fallback if record.void() not supported
-                    let creditMemo = record.transform({
+                    // Transform Invoice → Credit Memo
+                    let cmRec = record.transform({
                         fromType: record.Type.INVOICE,
                         fromId: internalId,
-                        toType: record.Type.CUSTOMER_CREDIT,
+                        toType: record.Type.CREDIT_MEMO,
                         isDynamic: true
                     });
 
-                    let cmId = creditMemo.save({
+                    // Disable auto-apply
+                    let applyCount = cmRec.getLineCount({ sublistId: 'apply' });
+                    for (let i = 0; i < applyCount; i++) {
+                        cmRec.selectLine({ sublistId: 'apply', line: i });
+                        cmRec.setCurrentSublistValue({
+                            sublistId: 'apply',
+                            fieldId: 'apply',
+                            value: false
+                        });
+                        cmRec.commitLine({ sublistId: 'apply' });
+                    }
+
+                    // Allow GST to recalc
+                    cmRec.setValue({
+                        fieldId: 'taxdetailsoverride',
+                        value: false
+                    });
+
+                    // Save CM
+                    let cmId = cmRec.save({
+                        enableSourcing: true,
+                        ignoreMandatoryFields: true
+                    });
+
+                    // Apply CM to Invoice
+                    let cmApply = record.load({
+                        type: record.Type.CREDIT_MEMO,
+                        id: cmId,
+                        isDynamic: true
+                    });
+
+                    let applyCount2 = cmApply.getLineCount({ sublistId: 'apply' });
+                    for (let i = 0; i < applyCount2; i++) {
+
+                        let appliedTransId = cmApply.getSublistValue({
+                            sublistId: 'apply',
+                            fieldId: 'internalid',
+                            line: i
+                        });
+
+                        if (String(appliedTransId) === String(internalId)) {
+                            cmApply.selectLine({ sublistId: 'apply', line: i });
+                            cmApply.setCurrentSublistValue({
+                                sublistId: 'apply',
+                                fieldId: 'apply',
+                                value: true
+                            });
+                            cmApply.commitLine({ sublistId: 'apply' });
+                        }
+                    }
+
+                    let cmAppliedId = cmApply.save({
                         enableSourcing: true,
                         ignoreMandatoryFields: true
                     });
 
                     return {
                         success: true,
-                        message: "Invoice cancelled by creating a Credit Memo (fallback method).",
-                        internalid: internalId,
-                        creditmemo: cmId
+                        message: "Invoice cancelled using GST-compliant Credit Memo (applied).",
+                        invoice_id: internalId,
+                        creditmemo_id: cmAppliedId
+                    };
+
+                } catch (err) {
+                    return {
+                        success: false,
+                        error: "Invoice cancellation failed (GST): " + err.message
                     };
                 }
             }
-
 
             else {
                 throw error.create({
