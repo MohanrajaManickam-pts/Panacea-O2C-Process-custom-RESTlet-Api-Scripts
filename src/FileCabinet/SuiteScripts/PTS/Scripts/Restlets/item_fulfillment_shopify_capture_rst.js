@@ -50,12 +50,22 @@ define(["SuiteScripts/pts_helper", "N/record"], function(util, record) {
         Shipped: "C",
       };
 
+      try {
+        
+      
+
       var itemFullfilmentRec = record.transform({
         fromType: "salesorder",
         fromId: data.orderId,
         toType: "itemfulfillment",
         isDynamic: true,
       });
+
+      } catch (error) {
+
+        log.Error("Error in transform record", error.message);  
+        
+      }
 
       if (!isNull(status)) {
         status = shipStatus[status];
